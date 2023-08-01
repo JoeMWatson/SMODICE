@@ -10,16 +10,19 @@ import torch
 from tqdm import tqdm
 
 from smodice_pytorch import SMODICE
-from oril_pytorch import ORIL 
+from oril_pytorch import ORIL
 
 from discriminator_pytorch import Discriminator, Discriminator_SA
 import utils
+
+import wandb
 
 np.set_printoptions(precision=3, suppress=True)
 
 MUJOCO = ['hopper', 'walker2d', 'halfcheetah', 'ant']
 
 def run(config):
+    wandb.init(config=config, project='smodice')
     version = 'v2'
     if 'kitchen' in config['env_name']:
         version  = 'v0'
@@ -27,7 +30,7 @@ def run(config):
     # Load environment
     if not config['mismatch']:
         env = gym.make(f"{config['env_name']}-{config['dataset']}-{version}")
-    else:      
+    else:
         env = gym.make(f"{config['env_name']}-random-{version}")
 
     if config['env_name'] not in MUJOCO:
@@ -37,10 +40,10 @@ def run(config):
             expert_env = gym.make(f"kitchen-complete-v0")
     else:
         expert_env = gym.make(f"{config['env_name']}-expert-{version}")
-    
+
     # Seeding
     np.random.seed(config['seed'])
-    torch.manual_seed(config['seed']) 
+    torch.manual_seed(config['seed'])
     env.seed(config['seed'])
     expert_env.seed(config['seed'])
 
@@ -49,10 +52,10 @@ def run(config):
         traj_iterator = utils.sequence_dataset(expert_env)
         expert_traj = next(traj_iterator)
     else:
-        # Load mismatch expert dataset 
+        # Load mismatch expert dataset
         demo_file = f"envs/demos/{config['env_name']}_{config['dataset']}.pkl"
         demo = pickle.load(open(demo_file, 'rb'))
-        if 'ant' in config['env_name']: 
+        if 'ant' in config['env_name']:
             expert_obs = np.array(demo['observations'][:1000])
             expert_actions = np.array(demo['actions'][:1000])
             expert_next_obs = np.array(demo['next_observations'][:1000])
@@ -81,11 +84,11 @@ def run(config):
     if config['use_policy_entropy_constraint'] or config['use_data_policy_entropy_constraint']:
         if config['target_entropy'] is None:
             config['target_entropy'] = -np.prod(env.action_space.shape)
-    
+
     # Create inputs for the discriminator
     state_dim = dataset_statistics['observation_dim'] + 1 if config['absorbing_state'] else dataset_statistics['observation_dim']
     action_dim = 0 if config['state'] else dataset_statistics['action_dim']
-    disc_cutoff = state_dim 
+    disc_cutoff = state_dim
 
     expert_input = expert_traj['observations'][:, :disc_cutoff]
     offline_input = dataset['observations'][:, :disc_cutoff]
@@ -94,7 +97,7 @@ def run(config):
 
     # Train discriminator
     if config['disc_type'] == 'learned':
-        dataset_expert = torch.utils.data.TensorDataset(torch.FloatTensor(expert_input))    
+        dataset_expert = torch.utils.data.TensorDataset(torch.FloatTensor(expert_input))
         expert_loader = torch.utils.data.DataLoader(dataset_expert, batch_size=256, shuffle=True, pin_memory=True)
         dataset_offline = torch.utils.data.TensorDataset(torch.FloatTensor(offline_input))
         offline_loader = torch.utils.data.DataLoader(dataset_offline, batch_size=256, shuffle=True, pin_memory=True)
@@ -138,7 +141,7 @@ def run(config):
     for iteration in tqdm(range(start_iteration, config['total_iterations'] + 1), ncols=70, desc='SMODICE', initial=start_iteration, total=config['total_iterations'] + 1, ascii=True, disable=os.environ.get("DISABLE_TQDM", False)):
         # Sample mini-batch data from dataset
         initial_observation, observation, action, reward, next_observation, terminal, expert = _sample_minibatch(config['batch_size'], config['reward_scale'])
-        
+
         # Get rewards
         with torch.no_grad():
             obs_for_disc = torch.from_numpy(np.array(observation)).to(discriminator.device)
@@ -154,14 +157,14 @@ def run(config):
                 reward = torch.zeros_like(reward)
 
         # Perform gradient descent
-        max_steps = 280 if 'kitchen' in config['env_name'] else None 
+        max_steps = 280 if 'kitchen' in config['env_name'] else None
         train_result = agent.train_step(initial_observation, observation, action, reward, next_observation, terminal)
-        
+
         # Logging
         if iteration % config['log_iterations'] == 0:
             train_result = {k: v.cpu().detach().numpy() for k, v in train_result.items()}
             # evaluation via real-env rollout
-            eval = utils.evaluate(env, agent, dataset_statistics, absorbing_state=config['absorbing_state'], 
+            eval = utils.evaluate(env, agent, dataset_statistics, absorbing_state=config['absorbing_state'],
             iteration=iteration, max_steps=max_steps)
             train_result.update({'iteration': iteration, 'eval': eval})
 
@@ -174,13 +177,19 @@ def run(config):
                 w_e_offline = w_e[offline_index].mean()
                 w_e_ratio = w_e_expert / w_e_offline
                 w_e_overall = w_e.mean()
-                
+
                 train_result.update({'w_e': w_e_overall, 'w_e_expert': w_e_expert, 'w_e_offline': w_e_offline, 'w_e_ratio': w_e_ratio})
+                wandb.log({'train/w_e': w_e_overall,
+                           'w_e_expert': w_e_expert,
+                           'w_e_offline': w_e_offline,
+                           'w_e_ratio': w_e_ratio}, step=iteration)
             train_result.update({'iter_per_sec': config['log_iterations'] / (time.time() - last_start_time)})
             if 'w_e' in train_result:
                 train_result.update({'w_e': train_result['w_e'].mean()})
             result_logs.append({'log': train_result, 'step': iteration})
-            
+
+            wandb.log(train_result, step=iteration)
+
             if not int(os.environ.get('DISABLE_STDOUT', 0)):
                 print(f'=======================================================')
 
@@ -190,25 +199,28 @@ def run(config):
                 print(f'=======================================================', flush=True)
 
             last_start_time = time.time()
+    return result_logs
 
 
 if __name__ == "__main__":
     from configs.oil_observations_default import get_parser
     args = get_parser().parse_args()
 
-    if args.env_name == 'walker2d':
-        args.num_expert_traj = 100
+    # if args.env_name == 'walker2d':
+    #     args.num_expert_traj = 100
 
     # This is just the kitchen environment
     if args.env_name == 'kitchen':
         args.num_expert_traj = 0
         args.num_offline_traj = 2000
-        args.absorbing_state = False 
+        args.absorbing_state = False
         args.f = 'chi'
         args.dataset = 'mixed'
 
     if args.mismatch == True:
-        args.absorbing_state = False         
-    
-    run(vars(args))
+        args.absorbing_state = False
+
+    results = run(vars(args))
+    with open(f'{args.env_name}_{args.num_expert_traj}_{args.seed}.pkl', 'wb') as fp:
+        pickle.dump(results, fp)
 
