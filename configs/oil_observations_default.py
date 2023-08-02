@@ -8,7 +8,7 @@ def get_parser():
     parser.add_argument('--state', default=True, type=boolean)
     parser.add_argument('--mismatch', default=False, type=boolean)
     parser.add_argument('--algo_type', default='smodice', type=str)
-    parser.add_argument('--disc_type', default='learned', type=str)  
+    parser.add_argument('--disc_type', default='learned', type=str)
     parser.add_argument('--gamma', default=0.99, type=float)
 
     parser.add_argument('--num_expert_traj', default=200, type=int)
@@ -33,10 +33,11 @@ def get_parser():
     parser.add_argument('--v_l2_reg', default=0.0001, type=float)
     parser.add_argument('--use_policy_entropy_constraint', default=True, type=boolean)
     parser.add_argument('--target_entropy', default=None, type=float)
-    
+
     parser.add_argument('--device', default='cuda:0', type=str)
     parser.add_argument('--wandb', default=False, type=boolean)
     parser.add_argument('--make_gif', default=False, type=boolean)
+    parser.add_argument('--disable-tqdm', action='store_true')
     parser.add_argument('--seed', default=0, type=int)
 
     return parser

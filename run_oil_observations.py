@@ -101,7 +101,7 @@ def run(config):
         expert_loader = torch.utils.data.DataLoader(dataset_expert, batch_size=256, shuffle=True, pin_memory=True)
         dataset_offline = torch.utils.data.TensorDataset(torch.FloatTensor(offline_input))
         offline_loader = torch.utils.data.DataLoader(dataset_offline, batch_size=256, shuffle=True, pin_memory=True)
-        for i in tqdm(range(config['disc_iterations'])):
+        for i in tqdm(range(config['disc_iterations']), disable=config['disable_tqdm']):
             loss = discriminator.update(expert_loader, offline_loader)
 
     def _sample_minibatch(batch_size, reward_scale):
@@ -135,10 +135,12 @@ def run(config):
     result_logs = []
     start_iteration = 0
 
+    print(config)
+
     # Start training
     start_time = time.time()
     last_start_time = time.time()
-    for iteration in tqdm(range(start_iteration, config['total_iterations'] + 1), ncols=70, desc='SMODICE', initial=start_iteration, total=config['total_iterations'] + 1, ascii=True, disable=os.environ.get("DISABLE_TQDM", False)):
+    for iteration in tqdm(range(start_iteration, config['total_iterations'] + 1), ncols=70, desc='SMODICE', initial=start_iteration, total=config['total_iterations'] + 1, ascii=True, disable=config['disable_tqdm']):
         # Sample mini-batch data from dataset
         initial_observation, observation, action, reward, next_observation, terminal, expert = _sample_minibatch(config['batch_size'], config['reward_scale'])
 
