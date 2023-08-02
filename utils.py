@@ -113,7 +113,7 @@ def dice_combined_dataset(expert_env, env, num_expert_traj=2000, num_offline_tra
     env: d4rl environment
     """
     initial_obs_, obs_, next_obs_, action_, reward_, done_, expert_ = [], [], [], [], [], [], []
-
+    traj_idx = []
     def add_data(env, num_traj, dataset=None, expert_data=False):
         if dataset is None:
             dataset = env.get_dataset()
@@ -123,7 +123,6 @@ def dice_combined_dataset(expert_env, env, num_expert_traj=2000, num_offline_tra
         episode_step = 0
         reverse_current_traj = 0
         for i in range(N-1):
-            # only use this condition when num_traj < 2000
             if num_traj != 2000 and traj_count == num_traj:
                 break
             obs = dataset['observations'][i].astype(np.float32)
@@ -149,14 +148,24 @@ def dice_combined_dataset(expert_env, env, num_expert_traj=2000, num_offline_tra
             reward_.append(reward)
             done_.append(done_bool)
             expert_.append(expert_data)
+            traj_idx.append(traj_count)
             episode_step += 1
 
             if done_bool or is_final_timestep:
                 traj_count += 1
                 episode_step = 0
                 reverse_current_traj = not reverse_current_traj
+        return traj_count, N
 
-    add_data(expert_env, num_expert_traj, dataset=expert_dataset, expert_data=True)
+    traj_count, N = add_data(expert_env, 2000, dataset=expert_dataset, expert_data=True)
+    
+    if num_expert_traj < 2000:
+       traj_idxs = np.random.choice(np.arange(traj_count), size=(num_expert_traj,), replace=False)
+       step_idxs = [i for i in range(len(traj_idx)) if traj_idx[i] in traj_idxs]
+       filter_ = lambda l: [l[i] for i in step_idxs]
+       obs_, next_obs_, action_, reward_, done_, expert_ = map(
+               filter_, [obs_, next_obs_, action_, reward_, done_, expert_])
+       initial_obs_ = initial_obs_[:num_expert_traj]
     expert_size = len(obs_)
     print(f"Expert Traj {num_expert_traj}, Expert Size {expert_size}")
     add_data(env, num_offline_traj, dataset=offline_dataset, expert_data=False)

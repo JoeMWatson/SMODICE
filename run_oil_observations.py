@@ -22,7 +22,7 @@ np.set_printoptions(precision=3, suppress=True)
 MUJOCO = ['hopper', 'walker2d', 'halfcheetah', 'ant']
 
 def run(config):
-    wandb.init(config=config, project='smodice')
+    wandb.init(config=config, project='smodice2')
     version = 'v2'
     if 'kitchen' in config['env_name']:
         version  = 'v0'
